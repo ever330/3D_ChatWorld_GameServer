@@ -62,6 +62,7 @@ namespace GameServer
         public T Data { get; set; }
     }
 
+
     [Serializable]
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct ClientConnectPacket
@@ -69,7 +70,6 @@ namespace GameServer
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 30)]
         public string Nickname;
     }
-
 
     [Serializable]
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -107,7 +107,7 @@ namespace GameServer
     public struct ResEnterRoomPacket
     {
         [MarshalAs(UnmanagedType.Bool)]
-        public bool EnterResult;
+        public bool Result;
     }
 
     [Serializable]
@@ -122,8 +122,8 @@ namespace GameServer
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct S2CEchoChat
     {
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 30)]
-        public string Nickname;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 30)]
+        public byte[] Nickname;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 100)]
         public byte[] Chat;
     }
@@ -132,8 +132,8 @@ namespace GameServer
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct S2CNewPlayerPacket
     {
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 30)]
-        public string Nickname;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 30)]
+        public byte[] Nickname;
     }
 
     [Serializable]
@@ -148,8 +148,8 @@ namespace GameServer
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct ResRoomPlayersPacket
     {
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 30)]
-        public string Nickname;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 30)]
+        public byte[] Nickname;
         [MarshalAs(UnmanagedType.R4)]
         public float PosX;
         [MarshalAs(UnmanagedType.R4)]
@@ -168,6 +168,10 @@ namespace GameServer
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct C2SPlayerInfoPacket
     {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 30)]
+        public string Nickname;
+        [MarshalAs(UnmanagedType.I4)]
+        public int RoomNum;
         [MarshalAs(UnmanagedType.R4)]
         public float PosX;
         [MarshalAs(UnmanagedType.R4)]

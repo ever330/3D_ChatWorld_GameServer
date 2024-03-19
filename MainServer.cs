@@ -16,14 +16,15 @@ namespace GameServer
     class MainServer
     {
         public ServerNetwork ServerNetwork { get; private set; }
+
         private Thread packetAnalysisThread;        // 연결된 클라이언트들에게서 온 패킷을 분석할 스레드
         private RoomManager roomManager;
         private BlancGameServer mainForm;
 
-        public void InitServer(int port, int backlog, BlancGameServer form)
+        public void InitServer(int tcpPort, int udpPort, int backlog, BlancGameServer form)
         {
             ServerNetwork = new ServerNetwork();
-            ServerNetwork.Init(IPAddress.Any, port, backlog);
+            ServerNetwork.Init(IPAddress.Any, tcpPort, udpPort, backlog);
 
             roomManager = RoomManager.Instance;
             roomManager.Init(mainForm);
@@ -56,7 +57,10 @@ namespace GameServer
                     {
                         case PacketId.ClientConnect:
                             ClientConnectPacket conPac = Packet<ClientConnectPacket>.Deserialize(packetData);
-                            tempSession.Nickname = conPac.Nickname;
+                            string utf8 = Encoding.UTF8.GetString(packetData);
+                            tempSession.Nickname = utf8;
+                            int nicknameNullIndex = tempSession.Nickname.IndexOf('\0');
+                            tempSession.Nickname = tempSession.Nickname.Remove(nicknameNullIndex);
                             ServerNetwork.NetworkMessage.Enqueue(string.Format("{0} : {1} 접속", tempSession.Id, tempSession.Nickname));
                             mainForm.AddUserQ.Enqueue(new KeyValuePair<int, string>(tempSession.Id, tempSession.Nickname));
                             break;
@@ -91,24 +95,29 @@ namespace GameServer
                             ResEnterRoomPacket enterRes = new ResEnterRoomPacket();
                             if (RoomManager.Instance.RoomList.ContainsKey(enterPac.RoomNum))
                             {
+                                enterRes.Result = true;
                                 tempSession.RoomNum = enterPac.RoomNum;
                                 Room tempRoom = RoomManager.Instance.RoomList[enterPac.RoomNum];
 
+                                RoomManager.Instance.EnterRoom(enterPac.RoomNum, tempSession.Id, tempSession.Nickname);
+
                                 S2CNewPlayerPacket playerPac = new S2CNewPlayerPacket();
-                                playerPac.Nickname = tempSession.Nickname;
+                                playerPac.Nickname = new byte[30];
+                                byte[] nicknamebyte = Encoding.UTF8.GetBytes(tempSession.Nickname);
+                                Buffer.BlockCopy(nicknamebyte, 0, playerPac.Nickname, 0, nicknamebyte.Length);
                                 byte[] newPlayerData = new Packet<S2CNewPlayerPacket>(playerPac).Serialize();
 
                                 foreach (int id in tempRoom.Players.Keys)
                                 {
+                                    if (id == tempSession.Id)
+                                        continue;
+
                                     ServerNetwork.PacketSend(id, newPlayerData, PacketId.S2CNewPlayer);
                                 }
-
-                                RoomManager.Instance.EnterRoom(enterPac.RoomNum, tempSession.Id, tempSession.Nickname);
-                                enterRes.EnterResult = true;
                             }
                             else
                             {
-                                enterRes.EnterResult = false;
+                                enterRes.Result = false;
                             }
                             byte[] enterData = new Packet<ResEnterRoomPacket>(enterRes).Serialize();
                             ServerNetwork.PacketSend(tempSession.Id, enterData, PacketId.ResEnterRoom);
@@ -123,7 +132,9 @@ namespace GameServer
                                 if (tempSession.Nickname != player.NickName)
                                 {
                                     ResRoomPlayersPacket s2cInfoPac = new ResRoomPlayersPacket();
-                                    s2cInfoPac.Nickname = player.NickName;
+                                    s2cInfoPac.Nickname = new byte[30];
+                                    byte[] nameBytes = Encoding.UTF8.GetBytes(player.NickName);
+                                    Buffer.BlockCopy(nameBytes, 0, s2cInfoPac.Nickname, 0, nameBytes.Length);
                                     s2cInfoPac.PosX = player.Position.x;
                                     s2cInfoPac.PosY = player.Position.y;
                                     s2cInfoPac.PosZ = player.Position.z;
@@ -139,7 +150,9 @@ namespace GameServer
                         case PacketId.C2SEchoChat:
                             int playerRoomNum = tempSession.RoomNum;
                             S2CEchoChat echoPacket = new S2CEchoChat();
-                            echoPacket.Nickname = tempSession.Nickname;
+                            echoPacket.Nickname = new byte[30];
+                            byte[] nicknameBytes = Encoding.UTF8.GetBytes(tempSession.Nickname);
+                            Buffer.BlockCopy(nicknameBytes, 0, echoPacket.Nickname, 0, nicknameBytes.Length);
                             echoPacket.Chat = packetData;
                             byte[] chatData = new Packet<S2CEchoChat>(echoPacket).Serialize();
 
@@ -149,30 +162,30 @@ namespace GameServer
                             }
                             break;
 
-                        case PacketId.C2SPlayerInfo:
-                            C2SPlayerInfoPacket infoPac = Packet<C2SPlayerInfoPacket>.Deserialize(packetData);
-                            Vector3 position = new Vector3 { x = infoPac.PosX, y = infoPac.PosY, z = infoPac.PosZ };
-                            Vector3 forward = new Vector3 { x = infoPac.ForX, y = infoPac.ForY, z = infoPac.ForZ };
-                            RoomManager.Instance.PlayerSetting(tempSession.RoomNum, tempSession.Id, tempSession.Nickname, position, forward);
+                        //case PacketId.C2SPlayerInfo:
+                        //    C2SPlayerInfoPacket infoPac = Packet<C2SPlayerInfoPacket>.Deserialize(packetData);
+                        //    Vector3 position = new Vector3 { x = infoPac.PosX, y = infoPac.PosY, z = infoPac.PosZ };
+                        //    Vector3 forward = new Vector3 { x = infoPac.ForX, y = infoPac.ForY, z = infoPac.ForZ };
+                        //    RoomManager.Instance.PlayerSetting(tempSession.RoomNum, tempSession.Id, tempSession.Nickname, position, forward);
 
-                            S2CPlayerInfoPacket resPlayerPac = new S2CPlayerInfoPacket();
-                            resPlayerPac.Nickname = tempSession.Nickname;
-                            resPlayerPac.PosX = infoPac.PosX;
-                            resPlayerPac.PosY = infoPac.PosY;
-                            resPlayerPac.PosZ = infoPac.PosZ;
-                            resPlayerPac.ForX = infoPac.ForX;
-                            resPlayerPac.ForY = infoPac.ForY;
-                            resPlayerPac.ForZ = infoPac.ForZ;
-                            byte[] resPlayerData = new Packet<S2CPlayerInfoPacket>(resPlayerPac).Serialize();
+                        //    S2CPlayerInfoPacket resPlayerPac = new S2CPlayerInfoPacket();
+                        //    resPlayerPac.Nickname = Encoding.UTF8.GetBytes(tempSession.Nickname);
+                        //    resPlayerPac.PosX = infoPac.PosX;
+                        //    resPlayerPac.PosY = infoPac.PosY;
+                        //    resPlayerPac.PosZ = infoPac.PosZ;
+                        //    resPlayerPac.ForX = infoPac.ForX;
+                        //    resPlayerPac.ForY = infoPac.ForY;
+                        //    resPlayerPac.ForZ = infoPac.ForZ;
+                        //    byte[] resPlayerData = new Packet<S2CPlayerInfoPacket>(resPlayerPac).Serialize();
 
-                            Room room = RoomManager.Instance.RoomList[tempSession.RoomNum];
-                            foreach (int id in room.Players.Keys)
-                            {
-                                if (id != tempSession.Id)
-                                    ServerNetwork.PacketSend(id, resPlayerData, PacketId.S2CPlayerInfo);
-                            }
+                        //    Room room = RoomManager.Instance.RoomList[tempSession.RoomNum];
+                        //    foreach (int id in room.Players.Keys)
+                        //    {
+                        //        if (id != tempSession.Id)
+                        //            ServerNetwork.PacketSend(id, resPlayerData, PacketId.S2CPlayerInfo);
+                        //    }
 
-                            break;
+                        //    break;
 
                         default:
                             break;

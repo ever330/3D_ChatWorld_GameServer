@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -9,7 +10,7 @@ namespace GameServer
     class Room
     {
         public int PlayerCount;
-        public Dictionary<int, Player> Players;   // 플레이어 ID로 관리
+        public Dictionary<int, Player> Players;     // 플레이어 ID로 관리
     }
     class RoomManager
     {
@@ -19,6 +20,8 @@ namespace GameServer
 
         private Random randomRoomNum;
         private BlancGameServer mainForm;
+
+        private int ipNum = 1;
 
         public static RoomManager Instance
         {
@@ -58,8 +61,11 @@ namespace GameServer
             newPlayer.NickName = nickname;
             newPlayer.Position = new Vector3 { x = 1.2f, y = 5.5f, z = 39f };
             newPlayer.Forward = new Vector3 { x = 0, y = 0, z = 1 };
+            newPlayer.IpEP = new IPEndPoint(IPAddress.Any, 0);
 
             newRoom.Players.Add(playerId, newPlayer);
+
+            ipNum++;
 
             return newRoomNum;
         }
@@ -70,21 +76,22 @@ namespace GameServer
             newPlayer.Position = new Vector3 { x = 1.2f, y = 5.5f, z = 39f };
             newPlayer.Forward = new Vector3 { x = 0, y = 0, z = 1 };
             newPlayer.NickName = nickname;
+            newPlayer.IpEP = new IPEndPoint(IPAddress.Any, 0);
 
             RoomList[roomNum].PlayerCount++;
             RoomList[roomNum].Players.Add(playerId, newPlayer);
         }
 
-        public void PlayerSetting(int roomNum, int playerId, string nickname, Vector3 pos, Vector3 forward)
+        public void PlayerSetting(int roomNum, string nickname, Vector3 pos, Vector3 forward)
         {
             Room tempRoom = RoomList[roomNum];
-            Player tempPlayer = tempRoom.Players[playerId];
+            Player tempPlayer = tempRoom.Players.FirstOrDefault(x => x.Value.NickName == nickname).Value;
             tempPlayer.NickName = nickname;
             tempPlayer.Position = pos;
             tempPlayer.Forward = forward;
         }
 
-        public void GoOutRoom(int roomNum, int playerId)
+        public void GetOutRoom(int roomNum, int playerId)
         {
             if (!RoomList.ContainsKey(roomNum))
                 return;

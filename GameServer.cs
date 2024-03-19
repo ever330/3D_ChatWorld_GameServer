@@ -36,6 +36,7 @@ namespace GameServer
 
         private void OpenBtn_Click(object sender, EventArgs e)
         {
+            int portNum = Int32.Parse(portTextBox.Text);
             if (portTextBox.Text == "")
             {
                 WriteToRichTextBox("포트번호를 입력해주세요.");
@@ -44,7 +45,7 @@ namespace GameServer
             {
                 if (mainServer.ServerNetwork == null)
                 {
-                    mainServer.InitServer(Int32.Parse(portTextBox.Text), 10, this);
+                    mainServer.InitServer(portNum, portNum + 1, 10, this);
 
                     IPHostEntry host = Dns.GetHostEntry(Dns.GetHostName());
                     string localIP = string.Empty;

@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace GameServer
@@ -22,42 +23,36 @@ namespace GameServer
 
     public class ServerNetwork
     {
-        public Session ServerSession;
-        public Socket ServerSocket;
+        private Socket serverTcpSocket;
+        private UdpClient serverUdp;
 
         public Dictionary<int, Session> ClientSessions;
         public Dictionary<Socket, int> ClientSockets;   // 클라이언트 소켓과 index 매칭
 
         public Queue<string> NetworkMessage;
-        
+
         private Queue<int> clientIndexQ;                // 클라이언트에게 부여해 줄 index
         private Queue<int> disconnetIndexQ;             // 접속을 종료한 클라이언트에게서 받은 index (큐가 비어있지 않을 시, 통합 index보다 먼저 부여)
 
         private int maxClientCount = 100;               // 최대 접속받을 클라이언트 수
 
+        private Thread udpReceiveThread;
+
 
         // 서버 소켓 생성 및 클라이언트 소켓 바인드 비동기 대기
-        public void Init(IPAddress hostAddress, int port, int backlog)
+        public void Init(IPAddress hostAddress, int tcpPort, int udpPort, int backlog)
         {
             ClientSessions = new Dictionary<int, Session>();
             ClientSockets = new Dictionary<Socket, int>();
             NetworkMessage = new Queue<string>();
 
-            ServerSession = new Session();
-            ServerSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-
-            IPEndPoint ipEp = new IPEndPoint(hostAddress, port);
-
-            ServerSocket.Bind(ipEp);
-            ServerSocket.Listen(backlog);
-
+            serverTcpSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            IPEndPoint ipEp1 = new IPEndPoint(hostAddress, tcpPort);
+            serverTcpSocket.Bind(ipEp1);
+            serverTcpSocket.Listen(backlog);
             SocketAsyncEventArgs args = new SocketAsyncEventArgs();
             args.Completed += new EventHandler<SocketAsyncEventArgs>(AcceptCompleted);
-            ServerSocket.AcceptAsync(args);
-
-            ServerSession.Id = 0;
-            ServerSession.RecvQ = new StreamQueue(1024);
-            ServerSession.SendQ = new StreamQueue(1024);
+            serverTcpSocket.AcceptAsync(args);
 
             clientIndexQ = new Queue<int>();
             disconnetIndexQ = new Queue<int>();
@@ -66,17 +61,21 @@ namespace GameServer
             {
                 clientIndexQ.Enqueue(count);
             }
+
+            serverUdp = new UdpClient(udpPort);
+            udpReceiveThread = new Thread(UdpReceiveLoop);
+            udpReceiveThread.Start();
         }
 
         public void Close()
         {
-            if (ServerSocket != null)
+            if (serverTcpSocket != null)
             {
-                ServerSocket.Close();
-                ServerSocket.Dispose();
+                serverTcpSocket.Close();
+                serverTcpSocket.Dispose();
             }
 
-            foreach(Socket soc in ClientSockets.Keys)
+            foreach (Socket soc in ClientSockets.Keys)
             {
                 soc.Close();
                 soc.Dispose();
@@ -88,21 +87,19 @@ namespace GameServer
         private void AcceptCompleted(object sender, SocketAsyncEventArgs e)
         {
             Socket clientSocket = e.AcceptSocket;
-            if (ClientSessions != null)
-            {
-                SocketAsyncEventArgs args = new SocketAsyncEventArgs();
-                byte[] data = new byte[1024];
-                args.SetBuffer(data, 0, 1024);
-                args.UserToken = args.AcceptSocket;
-                args.Completed += new EventHandler<SocketAsyncEventArgs>(ReceiveCompleted);
-                clientSocket.ReceiveAsync(args);
-            }
 
             if (clientSocket == null)
             {
                 NetworkMessage.Enqueue("클라이언트 소켓 오류");
+                return;
+            }
+
+            if (NetworkMessage == null)
+            {
+                return;
             }
             NetworkMessage.Enqueue(clientSocket.RemoteEndPoint.ToString() + "접속");
+
 
             Session newClient = new Session();
             newClient.RecvQ = new StreamQueue(1024);
@@ -122,8 +119,19 @@ namespace GameServer
             ClientSessions.Add(newClient.Id, newClient);
             ClientSockets.Add(clientSocket, newClient.Id);
 
+            if (ClientSessions != null)
+            {
+                SocketAsyncEventArgs args = new SocketAsyncEventArgs();
+                byte[] data = new byte[1024];
+                args.SetBuffer(data, 0, 1024);
+                args.UserToken = args.AcceptSocket;
+                args.Completed += new EventHandler<SocketAsyncEventArgs>(ReceiveCompleted);
+                clientSocket.ReceiveAsync(args);
+            }
+
+
             e.AcceptSocket = null;
-            ServerSocket.AcceptAsync(e);
+            serverTcpSocket.AcceptAsync(e);
         }
 
         // 데이터 수신 callback 함수
@@ -183,7 +191,7 @@ namespace GameServer
                     if (ClientSessions.ContainsKey(id))
                     {
                         int roomNum = ClientSessions[id].RoomNum;
-                        RoomManager.Instance.GoOutRoom(roomNum, id);
+                        RoomManager.Instance.GetOutRoom(roomNum, id);
                         ClientSessions.Remove(id);
                         target.Close();
                         target.Dispose();
@@ -219,41 +227,82 @@ namespace GameServer
             NetworkMessage.Enqueue($"{id}으로 패킷 전송에 성공하였습니다.");
         }
 
-
-
-        public byte[] Serialize(object data)
+        private void UdpReceiveLoop()
         {
-            try
+            while (true)
             {
-                using (MemoryStream ms = new MemoryStream(1024))
+                try
                 {
-                    BinaryFormatter bf = new BinaryFormatter();
-                    bf.Serialize(ms, data);
-                    return ms.ToArray();
+                    byte[] udpData;
+                    IPEndPoint clientEP = new IPEndPoint(IPAddress.Any, 0);
+                    udpData = serverUdp.Receive(ref clientEP);
+
+                    if (udpData.Length == 0)
+                        continue;
+
+                    int packetSize = BitConverter.ToInt32(udpData, 0);
+                    short packetId = BitConverter.ToInt16(udpData, 4);
+
+                    // 패킷 크기만큼의 데이터를 추출
+                    byte[] packetData = new byte[packetSize];
+                    Buffer.BlockCopy(udpData, 6, packetData, 0, packetSize);
+
+                    C2SPlayerInfoPacket packet = Packet<C2SPlayerInfoPacket>.Deserialize(packetData);
+
+                    Room tempRoom = RoomManager.Instance.RoomList[packet.RoomNum];
+
+                    S2CPlayerInfoPacket sendPacket = new S2CPlayerInfoPacket();
+                    sendPacket.Nickname = packet.Nickname;
+                    sendPacket.PosX = packet.PosX;
+                    sendPacket.PosY = packet.PosY;
+                    sendPacket.PosZ = packet.PosZ;
+                    sendPacket.ForX = packet.ForX;
+                    sendPacket.ForY = packet.ForY;
+                    sendPacket.ForZ = packet.ForZ;
+
+                    byte[] sendData = new Packet<S2CPlayerInfoPacket>(sendPacket).Serialize();
+
+                    // 패킷의 총 사이즈를 바이트 배열로 변환
+                    byte[] sizeBytes = BitConverter.GetBytes(sendData.Length);
+                    // 패킷의 아이디를 바이트 배열로 변환
+                    byte[] idBytes = BitConverter.GetBytes((short)PacketId.S2CPlayerInfo);
+
+                    // 총 사이즈와 내용물을 합칠 바이트 배열
+                    byte[] totalData = new byte[sizeBytes.Length + idBytes.Length + sendData.Length];
+
+                    // 맨 앞에 사이즈 추가
+                    Array.Copy(sizeBytes, 0, totalData, 0, sizeBytes.Length);
+                    // 아이디 추가
+                    Buffer.BlockCopy(idBytes, 0, totalData, sizeBytes.Length, idBytes.Length);
+                    // 그 다음에 패킷 내용물 추가
+                    Buffer.BlockCopy(sendData, 0, totalData, sizeBytes.Length + idBytes.Length, sendData.Length);
+
+                    foreach (Player player in tempRoom.Players.Values)
+                    {
+                        if (player.NickName == packet.Nickname)
+                        {
+                            player.IpEP.Address = clientEP.Address;
+                            player.IpEP.Port = clientEP.Port + 1;
+                        }
+                        else
+                        {
+                            if (player.IpEP.Port == 0)
+                                continue;
+
+                            serverUdp.Send(totalData, totalData.Length, player.IpEP);
+                        }
+                    }
                 }
-            }
-            catch
-            {
-                return null;
+                catch (Exception e)
+                {
+                    NetworkMessage.Enqueue("UDP 수신 에러" + e.ToString());
+                }
             }
         }
 
-        public object Deserialize(byte[] data)
+        private void RoomBroadCast()
         {
-            try
-            {
-                using (MemoryStream ms = new MemoryStream(data))
-                {
-                    BinaryFormatter bf = new BinaryFormatter();
-                    object obj = bf.Deserialize(ms);
-                    return obj;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Serialization error: {ex.Message}");
-                return null;
-            }
+
         }
     }
 }
