@@ -243,54 +243,108 @@ namespace GameServer
                     int packetSize = BitConverter.ToInt32(udpData, 0);
                     short packetId = BitConverter.ToInt16(udpData, 4);
 
-                    // 패킷 크기만큼의 데이터를 추출
-                    byte[] packetData = new byte[packetSize];
-                    Buffer.BlockCopy(udpData, 6, packetData, 0, packetSize);
-
-                    C2SPlayerInfoPacket packet = Packet<C2SPlayerInfoPacket>.Deserialize(packetData);
-
-                    Room tempRoom = RoomManager.Instance.RoomList[packet.RoomNum];
-
-                    S2CPlayerInfoPacket sendPacket = new S2CPlayerInfoPacket();
-                    sendPacket.Nickname = packet.Nickname;
-                    sendPacket.PosX = packet.PosX;
-                    sendPacket.PosY = packet.PosY;
-                    sendPacket.PosZ = packet.PosZ;
-                    sendPacket.ForX = packet.ForX;
-                    sendPacket.ForY = packet.ForY;
-                    sendPacket.ForZ = packet.ForZ;
-
-                    byte[] sendData = new Packet<S2CPlayerInfoPacket>(sendPacket).Serialize();
-
-                    // 패킷의 총 사이즈를 바이트 배열로 변환
-                    byte[] sizeBytes = BitConverter.GetBytes(sendData.Length);
-                    // 패킷의 아이디를 바이트 배열로 변환
-                    byte[] idBytes = BitConverter.GetBytes((short)PacketId.S2CPlayerInfo);
-
-                    // 총 사이즈와 내용물을 합칠 바이트 배열
-                    byte[] totalData = new byte[sizeBytes.Length + idBytes.Length + sendData.Length];
-
-                    // 맨 앞에 사이즈 추가
-                    Array.Copy(sizeBytes, 0, totalData, 0, sizeBytes.Length);
-                    // 아이디 추가
-                    Buffer.BlockCopy(idBytes, 0, totalData, sizeBytes.Length, idBytes.Length);
-                    // 그 다음에 패킷 내용물 추가
-                    Buffer.BlockCopy(sendData, 0, totalData, sizeBytes.Length + idBytes.Length, sendData.Length);
-
-                    foreach (Player player in tempRoom.Players.Values)
+                    switch ((PacketId)packetId)
                     {
-                        if (player.NickName == packet.Nickname)
-                        {
-                            player.IpEP.Address = clientEP.Address;
-                            player.IpEP.Port = clientEP.Port + 1;
-                        }
-                        else
-                        {
-                            if (player.IpEP.Port == 0)
-                                continue;
+                        case PacketId.C2SPlayerInfo:
+                            // 패킷 크기만큼의 데이터를 추출
+                            byte[] packetData = new byte[packetSize];
+                            Buffer.BlockCopy(udpData, 6, packetData, 0, packetSize);
 
-                            serverUdp.Send(totalData, totalData.Length, player.IpEP);
-                        }
+                            C2SPlayerInfoPacket packet = Packet<C2SPlayerInfoPacket>.Deserialize(packetData);
+
+                            Room tempRoom = RoomManager.Instance.RoomList[packet.RoomNum];
+
+                            S2CPlayerInfoPacket sendPacket = new S2CPlayerInfoPacket();
+                            sendPacket.Nickname = packet.Nickname;
+                            sendPacket.PosX = packet.PosX;
+                            sendPacket.PosY = packet.PosY;
+                            sendPacket.PosZ = packet.PosZ;
+                            sendPacket.ForX = packet.ForX;
+                            sendPacket.ForY = packet.ForY;
+                            sendPacket.ForZ = packet.ForZ;
+
+                            byte[] sendData = new Packet<S2CPlayerInfoPacket>(sendPacket).Serialize();
+
+                            // 패킷의 총 사이즈를 바이트 배열로 변환
+                            byte[] sizeBytes = BitConverter.GetBytes(sendData.Length);
+                            // 패킷의 아이디를 바이트 배열로 변환
+                            byte[] idBytes = BitConverter.GetBytes((short)PacketId.S2CPlayerInfo);
+
+                            // 총 사이즈와 내용물을 합칠 바이트 배열
+                            byte[] totalData = new byte[sizeBytes.Length + idBytes.Length + sendData.Length];
+
+                            // 맨 앞에 사이즈 추가
+                            Array.Copy(sizeBytes, 0, totalData, 0, sizeBytes.Length);
+                            // 아이디 추가
+                            Buffer.BlockCopy(idBytes, 0, totalData, sizeBytes.Length, idBytes.Length);
+                            // 그 다음에 패킷 내용물 추가
+                            Buffer.BlockCopy(sendData, 0, totalData, sizeBytes.Length + idBytes.Length, sendData.Length);
+
+                            foreach (Player player in tempRoom.Players.Values)
+                            {
+                                if (player.NickName == packet.Nickname)
+                                {
+                                    player.IpEP.Address = clientEP.Address;
+                                    player.IpEP.Port = clientEP.Port + 1;
+                                }
+                                else
+                                {
+                                    if (player.IpEP.Port == 0)
+                                        continue;
+
+                                    serverUdp.Send(totalData, totalData.Length, player.IpEP);
+                                }
+                            }
+
+                            break;
+
+                        case PacketId.C2SVoice:
+                            int roomNum = BitConverter.ToInt32(udpData, 6);
+                            Room temp = RoomManager.Instance.RoomList[roomNum];
+                            int nicknameLength = udpData.Length - packetSize - 10;
+                            byte[] nicknameBytes = new byte[nicknameLength];
+
+                            Array.Copy(udpData, 10, nicknameBytes, 0, udpData.Length - packetSize - 10);
+                            string nick = Encoding.UTF8.GetString(nicknameBytes);
+
+                            // 패킷 크기만큼의 데이터를 추출
+                            byte[] voiceData = new byte[packetSize];
+                            Buffer.BlockCopy(udpData, 10 + nicknameLength, voiceData, 0, packetSize);
+
+                            // 패킷의 총 사이즈를 바이트 배열로 변환
+                            byte[] size = BitConverter.GetBytes(packetSize);
+                            // 패킷의 아이디를 바이트 배열로 변환
+                            byte[] id = BitConverter.GetBytes((short)PacketId.S2CVoice);
+
+                            // 총 사이즈와 내용물을 합칠 바이트 배열
+                            byte[] total = new byte[size.Length + id.Length + nicknameBytes.Length + voiceData.Length];
+
+                            // 맨 앞에 사이즈 추가
+                            Array.Copy(size, 0, total, 0, size.Length);
+                            // 아이디 추가
+                            Buffer.BlockCopy(id, 0, total, size.Length, id.Length);
+                            // 닉네임 추가
+                            Buffer.BlockCopy(nicknameBytes, 0, total, size.Length + id.Length, nicknameBytes.Length);
+                            // 그 다음에 패킷 내용물 추가
+                            Buffer.BlockCopy(voiceData, 0, total, size.Length + id.Length + nicknameBytes.Length, voiceData.Length);
+
+                            foreach (Player player in temp.Players.Values)
+                            {
+                                if (player.NickName == nick)
+                                {
+                                    player.IpEP.Address = clientEP.Address;
+                                    player.IpEP.Port = clientEP.Port + 1;
+                                }
+                                else
+                                {
+                                    if (player.IpEP.Port == 0)
+                                        continue;
+
+                                    serverUdp.Send(total, total.Length, player.IpEP);
+                                }
+                            }
+
+                            break;
                     }
                 }
                 catch (Exception e)

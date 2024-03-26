@@ -31,6 +31,9 @@ namespace GameServer
         C2SEchoChat = 1600,
         S2CEchoChat = 1601,
 
+        C2SVoice = 1700,
+        S2CVoice = 1701,
+
         ClientDisconnect = 1900
     }
 
